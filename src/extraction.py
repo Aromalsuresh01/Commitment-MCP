@@ -143,27 +143,33 @@ class CommitmentExtractor:
             return {"resolved": False, "confidence": 0.0}
 
     def _normalize_deadline(self, deadline_raw: Optional[str], email_date: datetime) -> Optional[datetime]:
-        """Simple rule-based deadline normalization. In production, this would be a Claude call."""
+        """Normalize deadlines using dateparser with email_date as the relative base."""
         if not deadline_raw:
             return None
         
-        raw = deadline_raw.lower()
-        if "today" in raw:
-            return email_date.replace(hour=17, minute=0, second=0)
-        elif "tomorrow" in raw:
-            return (email_date + timedelta(days=1)).replace(hour=17, minute=0, second=0)
-        elif "friday" in raw:
-            days_to_friday = (4 - email_date.weekday()) % 7
-            if days_to_friday == 0: days_to_friday = 7
-            return (email_date + timedelta(days=days_to_friday)).replace(hour=17, minute=0, second=0)
-        elif "eod" in raw:
-            return email_date.replace(hour=17, minute=0, second=0)
-        elif "next week" in raw:
-            days_to_next_monday = (7 - email_date.weekday()) % 7
-            if days_to_next_monday == 0: days_to_next_monday = 7
-            return (email_date + timedelta(days=days_to_next_monday + 6)).replace(hour=17, minute=0, second=0)
+        import dateparser
         
-        # Default to +3 days for vague "soon" or unknown
+        raw = deadline_raw.lower()
+        if "eod" in raw:
+            return email_date.replace(hour=17, minute=0, second=0)
+            
+        parsed = dateparser.parse(
+            raw,
+            settings={
+                'RELATIVE_BASE': email_date,
+                'PREFER_DATES_FROM': 'future',
+                'TIMEZONE': 'UTC',
+                'RETURN_AS_TIMEZONE_AWARE': False
+            }
+        )
+        
+        if parsed:
+            # If no time was specified, default to EOD (17:00)
+            if parsed.hour == 0 and parsed.minute == 0:
+                return parsed.replace(hour=17, minute=0, second=0)
+            return parsed
+            
+        # Fallback to +3 days if dateparser fails
         return email_date + timedelta(days=3)
 
     def compute_urgency_score(self, commitment: Commitment) -> float:

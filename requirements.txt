@@ -10,3 +10,4 @@ rich>=13.7.0
 tiktoken>=0.5.2
 numpy>=1.26.3
 scikit-learn>=1.4.0
+dateparser>=1.2.0

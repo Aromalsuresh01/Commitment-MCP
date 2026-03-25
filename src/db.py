@@ -40,7 +40,28 @@ class Database:
                     extraction_confidence REAL NOT NULL,
                     urgency_score REAL DEFAULT 0.0,
                     notes TEXT,
-                    tags TEXT -- stored as JSON string
+                    )
+            """)
+            
+            # Create fts index
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS fts_commitments USING fts5(
+                    id UNINDEXED,
+                    normalized,
+                    text
+                )
+            """)
+
+            # Create email_cache table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS email_cache (
+                    message_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    raw_content TEXT NOT NULL,
+                    sender_email TEXT NOT NULL,
+                    subject TEXT,
+                    date TEXT NOT NULL,
+                    cached_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
             
@@ -95,6 +116,16 @@ class Database:
                 commitment.extraction_confidence, commitment.urgency_score,
                 commitment.notes, json.dumps(commitment.tags)
             ))
+            
+            # Also update FTS index
+            cursor.execute("""
+                DELETE FROM fts_commitments WHERE id = ?
+            """, (commitment.id,))
+            cursor.execute("""
+                INSERT INTO fts_commitments (id, normalized, text)
+                VALUES (?, ?, ?)
+            """, (commitment.id, commitment.normalized, commitment.text))
+            
             conn.commit()
 
     def get_commitment(self, commitment_id: str) -> Optional[Commitment]:
@@ -188,17 +219,34 @@ class Database:
             return None
 
     def search_commitments(self, query: str, limit: int = 20) -> List[Commitment]:
-        """Full-text search over normalized commitment descriptions."""
+        """Full-text search over normalized commitment descriptions using FTS5."""
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
+            
+            # Use basic FTS match query
+            fts_query = ' OR '.join([f'{word}*' for word in query.split() if word])
+            if not fts_query:
+                return []
+
             cursor.execute("""
-                SELECT * FROM commitments 
-                WHERE normalized LIKE ? OR text LIKE ?
-                ORDER BY urgency_score DESC
+                SELECT c.* FROM commitments c
+                JOIN fts_commitments f ON c.id = f.id
+                WHERE fts_commitments MATCH ?
+                ORDER BY c.urgency_score DESC
                 LIMIT ?
-            """, (f"%{query}%", f"%{query}%", limit))
+            """, (fts_query, limit))
             return [self._row_to_commitment(row) for row in cursor.fetchall()]
+
+    def upsert_email_cache(self, message_id: str, thread_id: str, raw_content: str, sender_email: str, subject: str, date: str):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR IGNORE INTO email_cache (
+                    message_id, thread_id, raw_content, sender_email, subject, date
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (message_id, thread_id, raw_content, sender_email, subject, date))
+            conn.commit()
 
     def update_sync_state(self, state: SyncState):
         with self._get_connection() as conn:

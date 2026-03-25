@@ -105,6 +105,11 @@ class EmailCommitmentServer:
                         },
                         "required": ["query"]
                     }
+                ),
+                types.Tool(
+                    name="run_eval",
+                    description="Run accuracy evaluation over a dataset and return metrics",
+                    inputSchema={"type": "object", "properties": {}}
                 )
             ]
 
@@ -130,11 +135,14 @@ class EmailCommitmentServer:
                         arguments["query"],
                         arguments.get("limit", 20)
                     )
+                elif name == "run_eval":
+                    return await self.run_eval_tool()
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
                 logger.exception(f"Error executing tool {name}")
-                return [types.TextContent(type="text", text=f"Error executing tool {name}: {str(e)}")]
+                import json
+                return [types.TextContent(type="text", text=json.dumps({"error": str(e), "success": False}))]
 
     def _parse_email(self, raw_val: str) -> str:
         """Helper to extract email address from raw header string."""
@@ -175,6 +183,20 @@ class EmailCommitmentServer:
                     continue
                 
                 sender_email = self._parse_email(headers.get('from', ''))
+                
+                # Cache the email content
+                try:
+                    self.db.upsert_email_cache(
+                        message_id=msg_id,
+                        thread_id=msg_detail['threadId'],
+                        raw_content=body,
+                        sender_email=sender_email,
+                        subject=headers.get('subject', ''),
+                        date=headers.get('date', datetime.now().isoformat())
+                    )
+                except Exception as cache_err:
+                    logger.warning(f"Failed to cache email {msg_id}: {cache_err}")
+
                 sender_is_me = sender_email == self.gmail.user_email.lower()
                 counterparty = headers.get('to') if sender_is_me else headers.get('from')
                 email_date = datetime.now() # Fallback
@@ -346,6 +368,17 @@ class EmailCommitmentServer:
             output += f"  - From: {c.counterparty_email} | Deadline: {c.deadline_raw or 'None'}\n"
         
         return [types.TextContent(type="text", text=output)]
+
+    async def run_eval_tool(self) -> List[types.TextContent]:
+        from src.eval import EvaluationRunner
+        try:
+            runner = EvaluationRunner(self.extractor)
+            results = runner.run_evaluation()
+            import json
+            return [types.TextContent(type="text", text=json.dumps(results, indent=2))]
+        except Exception as e:
+            logger.error(f"Error running eval: {e}")
+            raise
 
     async def run(self):
         async with stdio_server() as (read_stream, write_stream):

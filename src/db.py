@@ -40,7 +40,8 @@ class Database:
                     extraction_confidence REAL NOT NULL,
                     urgency_score REAL DEFAULT 0.0,
                     notes TEXT,
-                    )
+                    tags TEXT -- stored as JSON string
+                )
             """)
             
             # Create fts index

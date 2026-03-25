@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# SQLite
+*.db
+*.db-journal
+
+# Gmail API
+token.json
+credentials.json
+
+# IDEs
+.vscode/
+.idea/
+.trae/
+
+# OS
+.DS_Store
+Thumbs.db
